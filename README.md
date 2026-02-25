@@ -490,6 +490,7 @@ Este proyecto es material educativo. Uso libre para fines de aprendizaje.
 ---
 
 <p align="center">
-  <strong>Desarrollado con FastAPI</strong><br>
-  Tutorial de APIs REST con arquitectura de 3 capas
+  <strong>Desarrollado por:</strong><br>
+  Carlos Arturo Castro Castro<br>
+  Claude Code & Kilo Code
 </p>
