@@ -10,42 +10,49 @@ Endpoints:
 """
 
 from fastapi import APIRouter, HTTPException, Query, Response
+# APIRouter: crea grupo de rutas con prefijo común (mini app).
+# HTTPException: lanza errores HTTP (404, 500, etc.).
+# Query: define parámetros de query string (?esquema=public&limite=10).
+# Response: respuestas HTTP personalizadas (ej: 204 sin body).
 
-from models.producto import Producto
-from servicios.fabrica_repositorios import crear_servicio_producto
+from models.producto import Producto   # Modelo Pydantic: valida el body de POST y PUT
+from servicios.fabrica_repositorios import crear_servicio_producto  # Factory: crea el servicio
 
 
 router = APIRouter(prefix="/api/producto", tags=["Producto"])
+# prefix: todas las rutas empiezan con /api/producto
+# tags: agrupa endpoints bajo "Producto" en Swagger UI
 
 
 # =========================================================================
 # GET /api/producto/ — Listar todos los productos
 # =========================================================================
 
-@router.get("/")
+@router.get("/")                       # Registra esta función como handler de GET /api/producto/
 async def listar_productos(
-    esquema: str | None = Query(default=None),
-    limite: int | None = Query(default=None)
+    esquema: str | None = Query(default=None),   # Query string opcional: ?esquema=public
+    limite: int | None = Query(default=None)      # Query string opcional: ?limite=10
 ):
     """Lista todos los productos."""
     try:
-        servicio = crear_servicio_producto()
-        filas = await servicio.listar(esquema, limite)
+        servicio = crear_servicio_producto()      # Factory: crea todo el stack (repo + servicio)
+        filas = await servicio.listar(esquema, limite)  # Delega al servicio → repo → SQL
 
         if len(filas) == 0:
-            return Response(status_code=204)
+            return Response(status_code=204)       # 204 No Content: sin productos
+        # 204 = "petición exitosa pero no hay contenido que devolver"
 
-        return {
+        return {                                   # FastAPI convierte dict a JSON automáticamente
             "tabla": "producto",
             "total": len(filas),
             "datos": filas
         }
 
-    except ValueError as ex:
+    except ValueError as ex:                       # ValueError: validación del servicio
         raise HTTPException(status_code=400, detail={
             "estado": 400, "mensaje": "Parámetros inválidos.", "detalle": str(ex)
         })
-    except Exception as ex:
+    except Exception as ex:                        # Cualquier otro error (BD, conexión, etc.)
         raise HTTPException(status_code=500, detail={
             "estado": 500, "mensaje": "Error interno del servidor.", "detalle": str(ex)
         })
@@ -55,9 +62,9 @@ async def listar_productos(
 # GET /api/producto/{codigo} — Obtener producto por código
 # =========================================================================
 
-@router.get("/{codigo}")
+@router.get("/{codigo}")               # {codigo} = path parameter: GET /api/producto/PR001
 async def obtener_producto(
-    codigo: str,
+    codigo: str,                       # Viene de la URL (path parameter)
     esquema: str | None = Query(default=None)
 ):
     """Obtiene un producto por su código."""
@@ -65,11 +72,12 @@ async def obtener_producto(
         servicio = crear_servicio_producto()
         filas = await servicio.obtener_por_codigo(codigo, esquema)
 
-        if len(filas) == 0:
+        if len(filas) == 0:                        # Producto no encontrado
             raise HTTPException(status_code=404, detail={
                 "estado": 404,
                 "mensaje": f"No se encontró producto con codigo = {codigo}"
             })
+        # 404 Not Found = "el recurso que buscas no existe"
 
         return {
             "tabla": "producto",
@@ -78,7 +86,8 @@ async def obtener_producto(
         }
 
     except HTTPException:
-        raise
+        raise                                      # Re-lanza 404 sin convertirla en 500
+    # Sin este bloque, except Exception capturaría el 404 y lo haría 500.
     except Exception as ex:
         raise HTTPException(status_code=500, detail={
             "estado": 500, "mensaje": "Error interno del servidor.", "detalle": str(ex)
@@ -91,16 +100,19 @@ async def obtener_producto(
 
 @router.post("/")
 async def crear_producto(
-    producto: Producto,
+    producto: Producto,                # Body JSON validado por Pydantic automáticamente
     esquema: str | None = Query(default=None)
 ):
     """Crea un nuevo producto. Valida con el modelo Pydantic."""
+    # Si el JSON es inválido, FastAPI retorna 422 SIN ejecutar esta función.
     try:
-        datos = producto.model_dump()
-        servicio = crear_servicio_producto()
-        creado = await servicio.crear(datos, esquema)
+        datos = producto.model_dump()              # Pydantic → dict Python
+        # {"codigo": "PR006", "nombre": "Mouse", "stock": 10, "valorunitario": 50000.0}
 
-        if creado:
+        servicio = crear_servicio_producto()
+        creado = await servicio.crear(datos, esquema)  # Servicio valida → repo ejecuta INSERT
+
+        if creado:                                 # INSERT afectó al menos 1 fila
             return {
                 "estado": 200,
                 "mensaje": "Producto creado exitosamente.",
@@ -112,8 +124,8 @@ async def crear_producto(
             })
 
     except HTTPException:
-        raise
-    except ValueError as ex:
+        raise                                      # Re-lanza sin modificar
+    except ValueError as ex:                       # Validación del servicio
         raise HTTPException(status_code=400, detail={
             "estado": 400, "mensaje": "Datos inválidos.", "detalle": str(ex)
         })
@@ -129,24 +141,28 @@ async def crear_producto(
 
 @router.put("/{codigo}")
 async def actualizar_producto(
-    codigo: str,
-    producto: Producto,
+    codigo: str,                       # De la URL: PUT /api/producto/PR001
+    producto: Producto,                # Body JSON validado por Pydantic
     esquema: str | None = Query(default=None)
 ):
     """Actualiza un producto existente."""
     try:
-        datos = producto.model_dump(exclude={"codigo"})
+        datos = producto.model_dump(exclude={"codigo"})  # Excluye PK del SET
+        # exclude={"codigo"}: no queremos que UPDATE cambie la PK.
+        # Resultado: {"nombre": "Laptop Gamer", "stock": 15, "valorunitario": 3000000.0}
+
         servicio = crear_servicio_producto()
         filas = await servicio.actualizar(codigo, datos, esquema)
+        # UPDATE producto SET ... WHERE codigo = 'PR001'
 
-        if filas > 0:
+        if filas > 0:                              # Producto existía y se actualizó
             return {
                 "estado": 200,
                 "mensaje": "Producto actualizado exitosamente.",
                 "filtro": f"codigo = {codigo}",
                 "filasAfectadas": filas
             }
-        else:
+        else:                                      # filas == 0: producto no existe
             raise HTTPException(status_code=404, detail={
                 "estado": 404,
                 "mensaje": f"No existe producto con codigo = {codigo}"
@@ -170,29 +186,31 @@ async def actualizar_producto(
 
 @router.delete("/{codigo}")
 async def eliminar_producto(
-    codigo: str,
+    codigo: str,                       # De la URL: DELETE /api/producto/PR001
     esquema: str | None = Query(default=None)
 ):
     """Elimina un producto por su código."""
+    # DELETE no necesita body — solo el identificador en la URL.
     try:
         servicio = crear_servicio_producto()
         filas = await servicio.eliminar(codigo, esquema)
+        # DELETE FROM producto WHERE codigo = 'PR001'
 
-        if filas > 0:
+        if filas > 0:                              # Producto existía y se eliminó
             return {
                 "estado": 200,
                 "mensaje": "Producto eliminado exitosamente.",
                 "filtro": f"codigo = {codigo}",
                 "filasEliminadas": filas
             }
-        else:
+        else:                                      # filas == 0: producto no existía
             raise HTTPException(status_code=404, detail={
                 "estado": 404,
                 "mensaje": f"No existe producto con codigo = {codigo}"
             })
 
     except HTTPException:
-        raise
+        raise                                      # Re-lanza 404
     except Exception as ex:
         raise HTTPException(status_code=500, detail={
             "estado": 500, "mensaje": "Error interno del servidor.", "detalle": str(ex)
